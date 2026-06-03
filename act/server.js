@@ -1,49 +1,48 @@
 require('dotenv').config();
 const express = require('express');
-const mysql = require('mysql2/promise');
 const cors = require('cors');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Database connection pool
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'account_manager',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
+// Configuration
+const PHP_PROXY_URL = process.env.PHP_PROXY_URL || 'https://your-website.com/db_proxy.php';
+const PROXY_SECRET = process.env.PROXY_SECRET || 'CHANGE_ME_TO_A_LONG_SECRET_STRING';
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date() });
+  res.status(200).json({ status: 'ok', proxyTarget: PHP_PROXY_URL, timestamp: new Date() });
 });
 
-// Sync GET endpoint: Retrieve encrypted blob for a Sync ID
+// Sync GET endpoint: Retrieve encrypted blob for a Sync ID via PHP proxy
 app.get('/sync/:syncId', async (req, res) => {
   try {
     const { syncId } = req.params;
-    const [rows] = await pool.query('SELECT encrypted_blob, updated_at FROM user_data WHERE user_id = ?', [syncId]);
     
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'No data found for this Sync ID' });
+    // Using dynamic import for fetch since node-fetch isn't installed and native fetch is available in modern Node.
+    // If running Node < 18, this might require 'node-fetch'
+    const proxyResponse = await fetch(`${PHP_PROXY_URL}?syncId=${syncId}`, {
+      method: 'GET',
+      headers: {
+        'X-Proxy-Secret': PROXY_SECRET
+      }
+    });
+
+    const data = await proxyResponse.json();
+    
+    if (!proxyResponse.ok) {
+      return res.status(proxyResponse.status).json(data);
     }
     
-    res.json({
-      data: rows[0].encrypted_blob,
-      updatedAt: rows[0].updated_at
-    });
+    res.json(data);
   } catch (error) {
-    console.error('Error fetching sync data:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error fetching sync data via proxy:', error);
+    res.status(500).json({ error: 'Internal server error while communicating with database proxy' });
   }
 });
 
-// Sync POST endpoint: Save encrypted blob for a Sync ID
+// Sync POST endpoint: Save encrypted blob for a Sync ID via PHP proxy
 app.post('/sync/:syncId', async (req, res) => {
   try {
     const { syncId } = req.params;
@@ -53,18 +52,25 @@ app.post('/sync/:syncId', async (req, res) => {
       return res.status(400).json({ error: 'Missing encryptedBlob' });
     }
     
-    // Upsert into MySQL
-    await pool.query(
-      `INSERT INTO user_data (user_id, encrypted_blob) 
-       VALUES (?, ?) 
-       ON DUPLICATE KEY UPDATE encrypted_blob = ?, updated_at = CURRENT_TIMESTAMP`,
-      [syncId, encryptedBlob, encryptedBlob]
-    );
+    const proxyResponse = await fetch(PHP_PROXY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Proxy-Secret': PROXY_SECRET
+      },
+      body: JSON.stringify({ syncId, encryptedBlob })
+    });
+
+    const data = await proxyResponse.json();
     
-    res.json({ success: true, message: 'Data synced successfully' });
+    if (!proxyResponse.ok) {
+      return res.status(proxyResponse.status).json(data);
+    }
+    
+    res.json(data);
   } catch (error) {
-    console.error('Error saving sync data:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error saving sync data via proxy:', error);
+    res.status(500).json({ error: 'Internal server error while communicating with database proxy' });
   }
 });
 
