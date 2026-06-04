@@ -45,6 +45,18 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', database: 'connected', timestamp: new Date() });
 });
 
+// Simple ping route to keep Render and Aiven awake
+app.get('/ping', async (req, res) => {
+  try {
+    // A simple query keeps the Aiven MySQL database connection alive
+    await pool.query('SELECT 1');
+    res.status(200).send('pong');
+  } catch (error) {
+    console.error('Ping error:', error);
+    res.status(500).send('error');
+  }
+});
+
 // Sync GET
 app.get('/sync/:syncId', async (req, res) => {
   try {
