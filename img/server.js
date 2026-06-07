@@ -20,9 +20,17 @@ if (!fs.existsSync('uploads')) {
 }
 
 // Ensure the environment variables are set or fallback to defaults (for Render)
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 3000;
 const IMGBOX_COOKIE = process.env.IMGBOX_COOKIE || '';
 const GALLERY_ID = process.env.GALLERY_ID || '';
+
+/**
+ * 0. Healthcheck Endpoint
+ * A lightweight endpoint for Render to ping to keep the service awake.
+ */
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', service: 'imgbox-backend' });
+});
 
 /**
  * 1. Test Endpoint
